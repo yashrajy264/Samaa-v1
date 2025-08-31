@@ -5,7 +5,8 @@ import logging
 import asyncio
 import schedule
 import time
-from datetime import datetime, timedelta
+import fcntl  # Add this import
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -50,9 +51,15 @@ class NewsBhaiBot:
         self.stt_handler = STTHandler()
         self.scheduler = NewsScheduler(self)
         
+        # Flag to track if test message has been sent
+        self.test_message_sent = False
+        
         # Create application
         self.application = Application.builder().token(self.token).build()
         self.setup_handlers()
+        
+        # Start cache cleaning scheduler
+        self.cache_cleaning_task = None
     
     def setup_handlers(self):
         """Set up all command and message handlers"""
@@ -461,7 +468,7 @@ Choose your preferred language:"""
     
     # Add this method to the NewsBhaiBot class
     async def send_personalized_news(self, user_id: int, update: Update):
-        """Send personalized news to user"""
+        """Send personalized news to user with proper error handling"""
         try:
             # Show typing indicator immediately
             await update.message.reply_text("🔍 Fetching your personalized news... Please wait a moment.")
@@ -474,40 +481,37 @@ Choose your preferred language:"""
             # Enable auto scraping only when explicitly requested
             self.news_scraper.set_auto_scrape(True)
             
-            # Define a function to run in a separate thread
-            async def fetch_news_task():
-                try:
-                    # Get latest news with retry mechanism
-                    news_data = await self.news_scraper.get_latest_news(topics)
+            try:
+                # Get latest news with retry mechanism
+                news_data = await self.news_scraper.get_latest_news(topics, limit=15)
+                
+                # Disable auto scraping after fetching
+                self.news_scraper.set_auto_scrape(False)
+                
+                if not news_data:
+                    await update.message.reply_text("😅 No news available right now, bhai! Try again later.")
+                    return
+                
+                # Summarize news for 30-second voice note
+                summary = await self.summarizer.create_news_digest(news_data, language, max_length=200)
+                
+                # Send text summary first
+                await update.message.reply_text(f"📰 **Your News Update**\n\n{summary}")
+                
+                # Generate and send 30-second voice note
+                voice_path = await self.tts_handler.generate_voice_note(summary, language, max_duration=30)
+                if voice_path and os.path.exists(voice_path):
+                    with open(voice_path, 'rb') as voice_file:
+                        await update.message.reply_voice(voice_file, caption="🎧 Your 30-second news summary")
+                    os.remove(voice_path)
+                else:
+                    await update.message.reply_text("📝 Voice note generation failed, but here's your text summary above!")
                     
-                    # Disable auto scraping after fetching
-                    self.news_scraper.set_auto_scrape(False)
-                    
-                    if not news_data:
-                        await update.message.reply_text("😅 No news available right now, bhai! Try again later.")
-                        return
-                    
-                    # Summarize news
-                    summary = await self.summarizer.create_news_digest(news_data, language)
-                    
-                    # Send text summary
-                    await update.message.reply_text(f"📰 **Your News Update**\n\n{summary}")
-                    
-                    # Generate and send voice note
-                    voice_path = await self.tts_handler.generate_voice_note(summary, language)
-                    if voice_path and os.path.exists(voice_path):
-                        with open(voice_path, 'rb') as voice_file:
-                            await update.message.reply_voice(voice_file)
-                        os.remove(voice_path)
-                        
-                except Exception as e:
-                    logger.error(f"Error in news fetching thread: {e}")
-                    await update.message.reply_text("😅 Sorry bhai, couldn't fetch news right now. Try again later!")
-                    # Make sure to disable auto scraping in case of error
-                    self.news_scraper.set_auto_scrape(False)
-            
-            # Run the task in the event loop without blocking
-            asyncio.create_task(fetch_news_task())
+            except Exception as e:
+                logger.error(f"Error in news fetching: {e}")
+                await update.message.reply_text("😅 Sorry bhai, couldn't fetch news right now. Try again later!")
+                # Make sure to disable auto scraping in case of error
+                self.news_scraper.set_auto_scrape(False)
             
         except Exception as e:
             logger.error(f"Error setting up news fetch: {e}")
@@ -554,21 +558,186 @@ Yeh tha aaj ka quick update! Set up your preferences to get personalized news li
         """Start the bot"""
         logger.info("Starting News Bhai Bot...")
         
-        # Start the scheduler in a separate thread
+        # Start the scheduler
         self.scheduler.start()
+        logger.info("Scheduler started")
         
-        # Start the bot
+        # Run the application with proper async handling
         self.application.run_polling()
+    
+    async def send_startup_test_message(self):
+        """Send a test message to active users on startup"""
+        try:
+            logger.info("Sending startup test message...")
+            
+            # Get active users
+            active_users = self.user_prefs.get_active_users()
+            
+            if not active_users:
+                logger.info("No active users found to send test message")
+                return
+            
+            # Create a sample news for testing
+            sample_news = {
+                'title': '🚀 News Bhai Bot is Online!',
+                'content': 'Your personal news assistant is ready to deliver the latest updates. Use /news to get started!',
+                'source': 'System',
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            for user_id in active_users[:5]:  # Limit to first 5 users
+                try:
+                    # Get user preferences
+                    prefs = self.user_prefs.get_user_preferences(user_id)
+                    language = prefs.get('language', 'english')
+                    
+                    # Send text message
+                    message = f"🎉 **{sample_news['title']}**\n\n{sample_news['content']}"
+                    await self.application.bot.send_message(
+                        chat_id=user_id,
+                        text=message,
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Generate and send voice note
+                    voice_path = self.tts_handler.text_to_speech(
+                        sample_news['content'], 
+                        language
+                    )
+                    
+                    if voice_path and os.path.exists(voice_path):
+                        with open(voice_path, 'rb') as voice_file:
+                            await self.application.bot.send_voice(
+                                chat_id=user_id, 
+                                voice=voice_file, 
+                                caption="🎧 Here's your audio news update!"
+                            )
+                        # Clean up the file
+                        os.remove(voice_path)
+                        
+                    logger.info(f"Sent startup message to user {user_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error sending startup message to user {user_id}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error in send_startup_test_message: {e}")
+    
+    async def clean_cache(self):
+        """Clean temporary files created by the bot"""
+        try:
+            import tempfile
+            import glob
+            
+            temp_dir = tempfile.gettempdir()
+            logger.info(f"Cleaning cache in {temp_dir}")
+            
+            # Clean voice note files
+            voice_patterns = [
+                os.path.join(temp_dir, "voice_note_*.ogg"),
+                os.path.join(temp_dir, "voice_note_*.wav")
+            ]
+            
+            files_removed = 0
+            for pattern in voice_patterns:
+                for file_path in glob.glob(pattern):
+                    try:
+                        # Check if file is older than 5 minutes to avoid deleting files in use
+                        file_age = time.time() - os.path.getmtime(file_path)
+                        if file_age > 300:  # 5 minutes in seconds
+                            os.remove(file_path)
+                            files_removed += 1
+                    except Exception as e:
+                        logger.warning(f"Could not remove cache file {file_path}: {e}")
+            
+            if files_removed > 0:
+                logger.info(f"Removed {files_removed} cache files")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning cache: {e}")
+    
+    async def start_cache_cleaning(self):
+        """Start periodic cache cleaning"""
+        try:
+            # Cancel any existing task
+            if hasattr(self, 'cache_cleaning_task') and self.cache_cleaning_task and not self.cache_cleaning_task.done():
+                self.cache_cleaning_task.cancel()
+            
+            # Run initial cleanup
+            await self.clean_cache()
+            
+            # Schedule periodic cleanup
+            async def periodic_cleanup():
+                while True:
+                    try:
+                        await asyncio.sleep(120)  # 2 minutes
+                        await self.clean_cache()
+                    except asyncio.CancelledError:
+                        break
+                    except Exception as e:
+                        logger.error(f"Error in periodic cache cleaning: {e}")
+                        await asyncio.sleep(60)  # Wait a bit before retrying
+            
+            # Start the periodic task
+            self.cache_cleaning_task = asyncio.create_task(periodic_cleanup())
+            logger.info("Started periodic cache cleaning every 2 minutes")
+            
+        except Exception as e:
+            logger.error(f"Failed to start cache cleaning: {e}")
 
+# Remove all duplicate code and fix the main execution block
 if __name__ == '__main__':
+    # Check if bot is already running
+    import subprocess
+    try:
+        result = subprocess.run(['pgrep', '-f', 'python.*bot.py'], capture_output=True, text=True)
+        if result.stdout.strip():
+            print("Bot is already running! Please stop the existing instance first.")
+            print("Use: pkill -f 'python.*bot.py' to stop it.")
+            exit(1)
+    except:
+        pass  # pgrep might not be available on all systems
+    
+    # Main bot execution with proper try-except structure
     try:
         import sys
         token = sys.argv[1] if len(sys.argv) > 1 else None
         bot = NewsBhaiBot(token)
+        
+        async def start_bot():
+            """Async startup function"""
+            try:
+                # Run startup tasks
+                await bot.send_startup_test_message()
+                await bot.start_cache_cleaning()
+                
+                logger.info("Bot startup tasks completed")
+                
+            except Exception as e:
+                logger.error(f"Error in startup tasks: {e}")
+        
+        # Create event loop and run startup tasks
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Schedule startup tasks
+        loop.create_task(start_bot())
+        
+        # Start the bot (this will block)
         bot.run()
+        
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
         print(f"Error: {e}")
         print("\nMake sure you have:")
         print("1. Created a .env file with TELEGRAM_BOT_TOKEN")
         print("2. Installed all dependencies: pip install -r requirements.txt")
+        print("3. Set up your database properly")
+    finally:
+        # Clean up lock file
+        try:
+            os.unlink(lock_file)
+        except:
+            pass

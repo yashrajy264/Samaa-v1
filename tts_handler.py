@@ -15,57 +15,55 @@ class TTSHandler:
         self.tts_models = {}
         self._load_tts_models()
         
-        # Voice settings for different languages
+        # Indian accent reference audio files (you'll need to add these)
+        self.indian_voice_samples = {
+            'english': '/path/to/indian_english_voice.wav',  # Add Indian English speaker sample
+            'hindi': '/path/to/indian_hindi_voice.wav',     # Add Indian Hindi speaker sample
+            'hinglish': '/path/to/indian_hinglish_voice.wav' # Add Indian Hinglish speaker sample
+        }
+        
+        # Voice settings for different languages with Indian accent
         self.voice_settings = {
             'hindi': {
-                'model_name': 'tts_models/hi/male/tacotron2-DDC',
-                'speaker': None,
+                'model_name': 'tts_models/multilingual/multi-dataset/xtts_v2',
+                'speaker_wav': self.indian_voice_samples.get('hindi'),
                 'language': 'hi'
             },
             'english': {
-                'model_name': 'tts_models/en/ljspeech/tacotron2-DDC',
-                'speaker': None,
+                'model_name': 'tts_models/multilingual/multi-dataset/xtts_v2',
+                'speaker_wav': self.indian_voice_samples.get('english'),
                 'language': 'en'
             },
             'hinglish': {
-                'model_name': 'tts_models/en/ljspeech/tacotron2-DDC',  # Use English model for Hinglish
-                'speaker': None,
-                'language': 'en'
+                'model_name': 'tts_models/multilingual/multi-dataset/xtts_v2',
+                'speaker_wav': self.indian_voice_samples.get('hinglish'),
+                'language': 'en'  # Use English for Hinglish with Indian accent
             }
         }
     
     def _load_tts_models(self):
-        """Load TTS models for different languages"""
+        """Load XTTS-v2 model for voice cloning with Indian accent"""
         try:
-            # Load English model (most reliable)
-            logger.info("Loading English TTS model...")
-            self.tts_models['english'] = TTS(
-                model_name="tts_models/en/ljspeech/tacotron2-DDC",
+            # Load XTTS-v2 model (supports voice cloning and multiple languages)
+            logger.info("Loading XTTS-v2 model for Indian accent voice cloning...")
+            xtts_model = TTS(
+                model_name="tts_models/multilingual/multi-dataset/xtts_v2",
                 progress_bar=False
             ).to(self.device)
             
-            # Try to load Hindi model
-            try:
-                logger.info("Loading Hindi TTS model...")
-                self.tts_models['hindi'] = TTS(
-                    model_name="tts_models/hi/male/tacotron2-DDC",
-                    progress_bar=False
-                ).to(self.device)
-            except Exception as e:
-                logger.warning(f"Hindi TTS model not available, will use English: {e}")
-                self.tts_models['hindi'] = self.tts_models['english']
+            # Use the same model for all languages (voice cloning will handle accents)
+            self.tts_models['english'] = xtts_model
+            self.tts_models['hindi'] = xtts_model
+            self.tts_models['hinglish'] = xtts_model
             
-            # Use English model for Hinglish
-            self.tts_models['hinglish'] = self.tts_models['english']
-            
-            logger.info("TTS models loaded successfully")
+            logger.info("XTTS-v2 model loaded successfully for Indian accent synthesis")
             
         except Exception as e:
-            logger.error(f"Error loading TTS models: {e}")
-            # Fallback: try to load any available model
+            logger.error(f"Error loading XTTS-v2 model: {e}")
+            # Fallback to basic models if XTTS-v2 fails
             try:
-                logger.info("Loading fallback TTS model...")
-                fallback_model = TTS(TTS.list_models()[0]).to(self.device)
+                logger.info("Loading fallback TTS models...")
+                fallback_model = TTS("tts_models/en/ljspeech/tacotron2-DDC").to(self.device)
                 self.tts_models['english'] = fallback_model
                 self.tts_models['hindi'] = fallback_model
                 self.tts_models['hinglish'] = fallback_model
@@ -73,29 +71,26 @@ class TTSHandler:
                 logger.error(f"Failed to load any TTS model: {e2}")
                 self.tts_models = {}
     
-    async def generate_voice_note(self, text: str, language: str = 'english') -> Optional[str]:
-        """Generate voice note from text"""
-        if not self.tts_models:
-            logger.error("No TTS models available")
-            return None
-        
+    async def generate_voice_note(self, text: str, language: str = 'english', max_duration: int = 30) -> str:
+        """Generate voice note with Indian accent using voice cloning"""
         try:
-            # Clean and prepare text
+            # Truncate text to fit approximately 30 seconds (about 200-250 words)
+            words = text.split()
+            if len(words) > 200:  # Approximate 30-second limit
+                text = ' '.join(words[:200]) + "... and that's your news update!"
+            
+            # Clean and prepare text for TTS
             clean_text = self._prepare_text_for_tts(text, language)
             
-            if not clean_text:
-                return None
+            # Get the appropriate TTS model
+            if language not in self.tts_models:
+                language = 'english'  # Fallback to English
             
-            # Get appropriate model
-            model = self.tts_models.get(language, self.tts_models.get('english'))
-            if not model:
-                logger.error(f"No TTS model available for language: {language}")
-                return None
+            model = self.tts_models[language]
             
-            # Generate audio
-            output_path = await self._generate_audio(model, clean_text, language)
-            
-            return output_path
+            # Generate voice file with Indian accent
+            voice_path = await self._generate_audio(model, clean_text, language)
+            return voice_path
             
         except Exception as e:
             logger.error(f"Error generating voice note: {e}")
@@ -147,25 +142,42 @@ class TTSHandler:
         return clean_text
     
     async def _generate_audio(self, model, text: str, language: str) -> str:
-        """Generate audio file from text using TTS model"""
+        """Generate audio with Indian accent using voice cloning"""
         try:
             # Create temporary file for output
-            temp_dir = tempfile.gettempdir()
-            output_filename = f"voice_note_{random.randint(1000, 9999)}.wav"
-            output_path = os.path.join(temp_dir, output_filename)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                wav_path = tmp_file.name
             
-            # Generate speech
-            model.tts_to_file(text=text, file_path=output_path)
+            # Get voice settings for the language
+            voice_config = self.voice_settings.get(language, self.voice_settings['english'])
+            speaker_wav = voice_config.get('speaker_wav')
+            target_language = voice_config.get('language', 'en')
             
-            # Convert to OGG format for Telegram (if needed)
-            ogg_path = output_path.replace('.wav', '.ogg')
-            await self._convert_to_ogg(output_path, ogg_path)
+            # Generate speech with Indian accent voice cloning
+            if speaker_wav and os.path.exists(speaker_wav):
+                # Use voice cloning with Indian accent reference
+                model.tts_to_file(
+                    text=text,
+                    file_path=wav_path,
+                    speaker_wav=speaker_wav,
+                    language=target_language,
+                    split_sentences=True  # Better for longer texts
+                )
+                logger.info(f"Generated audio with Indian accent voice cloning: {language}")
+            else:
+                # Fallback to default model without voice cloning
+                logger.warning(f"Indian voice sample not found for {language}, using default")
+                model.tts_to_file(text=text, file_path=wav_path)
+            
+            # Convert to OGG format for Telegram
+            ogg_path = wav_path.replace('.wav', '.ogg')
+            success = await self._convert_to_ogg(wav_path, ogg_path)
             
             # Clean up WAV file
-            if os.path.exists(output_path):
-                os.remove(output_path)
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
             
-            return ogg_path if os.path.exists(ogg_path) else output_path
+            return ogg_path if success else None
             
         except Exception as e:
             logger.error(f"Error generating audio: {e}")

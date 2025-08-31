@@ -112,8 +112,47 @@ class NewsSummarizer:
             logger.error(f"Error summarizing news: {e}")
             return self._generate_fallback_summary(news_data, language)
     
-    async def create_news_digest(self, news_data: List[Dict], language: str) -> str:
-        """Create a comprehensive news digest"""
+    async def create_news_digest(self, news_items: List[Dict], language: str = 'english', max_length: int = 300) -> str:
+        """Create a concise news digest for voice notes"""
+        if not news_items:
+            return "No news available at the moment."
+        
+        # Group news by topic
+        topics_news = {}
+        for item in news_items[:10]:  # Limit to top 10 items
+            topic = item.get('topic', 'general')
+            if topic not in topics_news:
+                topics_news[topic] = []
+            topics_news[topic].append(item)
+        
+        # Create friendly summary
+        summary_parts = []
+        
+        for topic, items in topics_news.items():
+            topic_emoji = {
+                'politics': '🏛️',
+                'technology': '💻', 
+                'sports': '⚽',
+                'entertainment': '🎬',
+                'business': '🏢',
+                'health': '🏥',
+                'international': '🌍'
+            }.get(topic, '📰')
+            
+            # Summarize top 2 items per topic
+            for item in items[:2]:
+                title = item.get('title', '').strip()
+                if title:
+                    summary_parts.append(f"{topic_emoji} {title}")
+        
+        # Join and limit length
+        full_summary = '\n\n'.join(summary_parts)
+        
+        if len(full_summary) > max_length:
+            # Truncate to fit max_length
+            full_summary = full_summary[:max_length-20] + "... Stay updated!"
+        
+        return full_summary
         if not news_data:
             return self._get_no_news_message(language)
         

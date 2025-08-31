@@ -21,10 +21,18 @@ class UserPreferences:
                         language TEXT DEFAULT 'english',
                         topics TEXT DEFAULT '[]',
                         frequency TEXT DEFAULT 'daily',
+                        setup_complete INTEGER DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+                
+                # Add setup_complete column to existing tables if it doesn't exist
+                cursor.execute("PRAGMA table_info(user_preferences)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'setup_complete' not in columns:
+                    cursor.execute("ALTER TABLE user_preferences ADD COLUMN setup_complete INTEGER DEFAULT 0")
+                
                 conn.commit()
                 logger.info("Database initialized successfully")
         except Exception as e:
@@ -151,3 +159,23 @@ class UserPreferences:
             logger.error(f"Error getting user topics: {e}")
             return []    
     # Remove duplicate get_user_topics method
+    
+    def mark_setup_complete(self, user_id: int) -> bool:
+        """Mark user as having completed setup"""
+        return self.update_user_preference(user_id, 'setup_complete', 1)
+    
+    def get_active_users(self):
+        """Get list of active user IDs"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get users who have completed setup
+            cursor.execute("SELECT user_id FROM user_preferences WHERE setup_complete = 1")
+            active_users = [row[0] for row in cursor.fetchall()]
+            
+            conn.close()
+            return active_users
+        except Exception as e:
+            logger.error(f"Error getting active users: {e}")
+            return []

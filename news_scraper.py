@@ -3,8 +3,9 @@ import logging
 import re
 import random
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
-import snscrape.modules.twitter as sntwitter
+from datetime import datetime, timedelta, timezone
+# Remove Twitter/X scraping dependency
+# import snscrape.modules.twitter as sntwitter  # REMOVED
 import requests
 from bs4 import BeautifulSoup
 
@@ -16,7 +17,7 @@ class NewsScraper:
         # Flag to control if scraping should happen automatically
         self.auto_scrape_enabled = False
         
-        # Popular Indian news handles on Twitter/X
+        # Popular Indian news handles on X (formerly Twitter)
         self.news_handles = {
             'general': ['ANI', 'ndtv', 'timesofindia', 'IndianExpress', 'htTweets'],
             'politics': ['ANI', 'ndtv', 'IndianExpress', 'republic', 'aajtak'],
@@ -36,55 +37,67 @@ class NewsScraper:
                 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms',
                 'https://www.hindustantimes.com/feeds/rss/news/latest.xml',
                 'https://www.indiatoday.in/rss/home',
-                'https://www.news18.com/rss/india.xml'
+                'https://www.news18.com/rss/india.xml',
+                'https://www.thehindu.com/news/feeder/default.rss',
+                'https://indianexpress.com/feed/'
             ],
             'politics': [
                 'https://timesofindia.indiatimes.com/rssfeeds/1898055.cms',
                 'https://www.thehindu.com/news/national/feeder/default.rss',
                 'https://www.indiatoday.in/rss/1206514',
-                'https://www.news18.com/rss/politics.xml'
+                'https://www.news18.com/rss/politics.xml',
+                'https://indianexpress.com/section/india/feed/'
             ],
             'technology': [
                 'https://economictimes.indiatimes.com/tech/rss/feedsdefault.cms',
                 'https://www.theverge.com/rss/index.xml',
                 'https://www.digit.in/feed',
-                'https://gadgets.ndtv.com/rss/feeds'
+                'https://gadgets.ndtv.com/rss/feeds',
+                'https://techcrunch.com/feed/',
+                'https://www.wired.com/feed/rss'
             ],
             'sports': [
                 'https://timesofindia.indiatimes.com/rssfeeds/4719148.cms',
                 'https://www.espn.in/espn/rss/cricket/news',
                 'https://sports.ndtv.com/rss/all',
-                'https://www.sportskeeda.com/feed'
+                'https://www.sportskeeda.com/feed',
+                'https://indianexpress.com/section/sports/feed/'
             ],
             'finance': [
                 'https://economictimes.indiatimes.com/markets/rss/rssfeeds.cms',
                 'https://www.livemint.com/rss/markets',
                 'https://www.moneycontrol.com/rss/latestnews.xml',
-                'https://www.business-standard.com/rss/markets-106.rss'
+                'https://www.business-standard.com/rss/markets-106.rss',
+                'https://www.reuters.com/business/finance/rss'
             ],
             'entertainment': [
                 'https://timesofindia.indiatimes.com/rssfeeds/1081479906.cms',
-                'https://www.filmfare.com/feed',
+                'https://www.bollywoodhungama.com/rss/bollywood-news.xml',
                 'https://www.bollywoodhungama.com/rss/news',
-                'https://indianexpress.com/section/entertainment/feed/'
+                'https://indianexpress.com/section/entertainment/feed/',
+                'https://www.hindustantimes.com/entertainment/feed'
             ],
             'health': [
                 'https://timesofindia.indiatimes.com/rssfeeds/3908999.cms',
                 'https://health.economictimes.indiatimes.com/rss',
                 'https://www.healthline.com/nutrition/feed',
-                'https://www.who.int/india/rss'
+                'https://www.who.int/india/rss',
+                'https://indianexpress.com/section/lifestyle/health/feed/'
             ],
             'international': [
                 'https://timesofindia.indiatimes.com/rssfeeds/296589292.cms',
                 'https://www.bbc.com/news/world/asia/india/rss.xml',
                 'https://rss.cnn.com/rss/edition_world.rss',
-                'https://feeds.feedburner.com/ndtvnews-world-news'
+                'https://feeds.feedburner.com/ndtvnews-world-news',
+                'https://www.reuters.com/world/rss',
+                'https://www.aljazeera.com/xml/rss/all.xml'
             ],
             'business': [
                 'https://economictimes.indiatimes.com/industry/rss/industry.cms',
                 'https://www.livemint.com/rss/companies',
                 'https://www.business-standard.com/rss/companies-101.rss',
-                'https://www.moneycontrol.com/rss/business.xml'
+                'https://www.moneycontrol.com/rss/business.xml',
+                'https://www.reuters.com/business/rss'
             ]
         }
     
@@ -105,8 +118,8 @@ class NewsScraper:
                 logger.error(f"Error scraping {topic} news: {e}")
                 continue
         
-        # Sort by timestamp and return most recent
-        all_news.sort(key=lambda x: x.get('timestamp', datetime.now()), reverse=True)
+        # Sort by timestamp and return most recent - fix datetime comparison
+        all_news.sort(key=lambda x: x.get('timestamp', datetime.now(timezone.utc)), reverse=True)
         return all_news[:limit]
     
     async def search_news(self, query: str, topics: List[str], limit: int = 5) -> List[Dict]:
@@ -130,168 +143,42 @@ class NewsScraper:
         return relevant_results[:limit]
     
     async def _scrape_topic_news(self, topic: str, limit: int) -> List[Dict]:
-        """Scrape news for a specific topic"""
+        """Scrape news for a specific topic using RSS feeds only"""
         # Special handling for current affairs
         if topic == 'current_affairs':
             return await self.scrape_current_affairs(limit)
             
         news_items = []
-        handles = self.news_handles.get(topic, self.news_handles['general'])
         
-        # Try Twitter scraping first with retry mechanism
-        twitter_success = False
-        error_count = 0
-        max_retries = 5
+        # Use RSS feeds directly - no more Twitter/X scraping
+        logger.info(f"Scraping RSS feeds for topic: {topic}")
+        rss_news = await self._scrape_rss_feed(topic)
+        news_items.extend(rss_news)
         
-        for handle in handles[:3]:  # Limit to 3 handles per topic to avoid rate limiting
-            if error_count >= max_retries:
-                logger.warning(f"Max Twitter retry attempts ({max_retries}) reached for topic {topic}. Switching to RSS feeds.")
-                break
-                
-            try:
-                # Use snscrape to get recent tweets
-                tweets = await self._get_tweets_from_handle(handle, limit // 3)
-                
-                if tweets:  # If we got tweets successfully
-                    twitter_success = True
-                    
-                    for tweet in tweets:
-                        if self._is_news_tweet(tweet['content']):
-                            news_items.append({
-                                'title': self._extract_title(tweet['content']),
-                                'content': tweet['content'],
-                                'source': f"@{handle}",
-                                'url': tweet.get('url', ''),
-                                'timestamp': tweet.get('date', datetime.now()),
-                                'topic': topic
-                            })
-                else:
-                    error_count += 1
-                
-            except Exception as e:
-                logger.error(f"Error scraping handle @{handle}: {e}")
-                error_count += 1
-        
-        # If Twitter scraping failed or didn't return enough results, use RSS fallback
-        if not twitter_success or len(news_items) < limit:
-            logger.info(f"Twitter scraping insufficient for topic {topic}. Using RSS fallback.")
-            rss_news = await self._scrape_rss_feed(topic)
-            news_items.extend(rss_news)
-        
-        return news_items
+        # Sort by timestamp and limit results - fix datetime comparison
+        news_items.sort(key=lambda x: x.get('timestamp', datetime.now(timezone.utc)), reverse=True)
+        return news_items[:limit]
     
-    async def _get_tweets_from_handle(self, handle: str, limit: int) -> List[Dict]:
-        """Get recent tweets from a Twitter handle using snscrape with retry mechanism"""
-        tweets = []
-        max_retries = 5
-        retry_count = 0
-        timeout_seconds = 10
-        
-        while retry_count < max_retries:
-            try:
-                # Create search query for recent tweets from handle
-                query = f"from:{handle} -filter:replies -filter:retweets"
-                
-                # Use snscrape to get tweets with better error handling
-                scraper = sntwitter.TwitterSearchScraper(query)
-                items_generator = scraper.get_items()
-                
-                # Add timeout protection
-                start_time = datetime.now()
-                tweet_count = 0
-                
-                for i, tweet in enumerate(items_generator):
-                    # Check for timeout
-                    if (datetime.now() - start_time).total_seconds() > timeout_seconds:
-                        logger.warning(f"Timeout reached while scraping tweets from @{handle}")
-                        break
-                        
-                    if i >= limit:
-                        break
-                    
-                    # Only get tweets from last 24 hours
-                    if tweet.date < datetime.now() - timedelta(days=1):
-                        break
-                    
-                    tweets.append({
-                        'content': tweet.rawContent,
-                        'url': tweet.url,
-                        'date': tweet.date,
-                        'likes': tweet.likeCount,
-                        'retweets': tweet.retweetCount
-                    })
-                    tweet_count += 1
-                
-                # If we got at least one tweet, consider it a success
-                if tweet_count > 0:
-                    return tweets
-                
-                # If we got no tweets but no error, increment retry count
-                logger.warning(f"No tweets found for @{handle}, retry {retry_count+1}/{max_retries}")
-                retry_count += 1
-                
-            except Exception as e:
-                # Log error and retry
-                logger.error(f"Error getting tweets from @{handle} (attempt {retry_count+1}/{max_retries}): {e}")
-                logger.error(f"Error type: {type(e).__name__}")
-                
-                retry_count += 1
-                if "404" in str(e) or "blocked" in str(e).lower():
-                    logger.warning(f"Twitter API 404/blocked error for @{handle}, may be rate limited or API changed")
-                    # If we get a 404/blocked error, increment retry count faster
-                    retry_count += 1
-                
-                # Wait before retrying
-                await asyncio.sleep(1)
-        
-        logger.error(f"Failed to get tweets from @{handle} after {max_retries} attempts")
-        return []
-    
-    async def _search_topic_with_keywords(self, topic: str, keywords: List[str], limit: int) -> List[Dict]:
-        """Search for news in a topic with specific keywords"""
-        results = []
-        handles = self.news_handles.get(topic, self.news_handles['general'])
-        
-        for handle in handles[:2]:  # Limit handles for keyword search
-            try:
-                # Create search query with keywords
-                keyword_query = ' OR '.join(keywords)
-                query = f"from:{handle} ({keyword_query}) -filter:replies -filter:retweets"
-                
-                for i, tweet in enumerate(sntwitter.TwitterSearchScraper(query).get_items()):
-                    if i >= limit:
-                        break
-                    
-                    # Only get tweets from last 3 days for search
-                    if tweet.date < datetime.now() - timedelta(days=3):
-                        break
-                    
-                    results.append({
-                        'title': self._extract_title(tweet.rawContent),
-                        'content': tweet.rawContent,
-                        'source': f"@{handle}",
-                        'url': tweet.url,
-                        'timestamp': tweet.date,
-                        'topic': topic,
-                        'relevance_score': self._calculate_relevance(tweet.rawContent, keywords)
-                    })
-                
-            except Exception as e:
-                logger.error(f"Error searching @{handle} with keywords: {e}")
-        
-        return results
+    # REMOVED: _get_tweets_from_handle method - no longer needed
     
     async def _scrape_rss_feed(self, topic: str) -> List[Dict]:
-        """Fallback RSS feed scraping when Twitter fails"""
+        """Enhanced RSS feed scraping with better error handling"""
         news_items = []
-        feeds = self.rss_feeds.get(topic, [])
+        feeds = self.rss_feeds.get(topic, self.rss_feeds['general'])
         
         for feed_url in feeds:
             try:
-                response = requests.get(feed_url, timeout=10)
+                # Add user agent to avoid blocking
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                
+                response = requests.get(feed_url, timeout=15, headers=headers)
+                response.raise_for_status()
+                
                 soup = BeautifulSoup(response.content, 'xml')
                 
-                items = soup.find_all('item')[:5]  # Get latest 5 items
+                items = soup.find_all('item')[:8]  # Get more items per feed
                 
                 for item in items:
                     title = item.find('title')
@@ -300,51 +187,66 @@ class NewsScraper:
                     pub_date = item.find('pubDate')
                     
                     if title and description:
+                        # Clean up description text
+                        desc_text = description.text.strip()
+                        if len(desc_text) > 300:
+                            desc_text = desc_text[:300] + "..."
+                        
+                        # Extract domain name for source
+                        source_name = self._extract_source_name(feed_url)
+                        
                         news_items.append({
                             'title': title.text.strip(),
-                            'content': description.text.strip(),
-                            'source': 'RSS Feed',
+                            'content': desc_text,
+                            'source': source_name,
                             'url': link.text.strip() if link else '',
-                            'timestamp': self._parse_rss_date(pub_date.text) if pub_date else datetime.now(),
+                            'timestamp': self._parse_rss_date(pub_date.text) if pub_date else datetime.now(timezone.utc),
                             'topic': topic
                         })
                 
+                logger.info(f"Successfully scraped {len(items)} items from {source_name}")
+                
             except Exception as e:
                 logger.error(f"Error scraping RSS feed {feed_url}: {e}")
+                continue
         
         return news_items
     
-    def _is_news_tweet(self, content: str) -> bool:
-        """Check if a tweet contains news content"""
-        # Filter out promotional, personal, or non-news tweets
-        news_indicators = [
-            'breaking', 'update', 'report', 'announces', 'says', 'according to',
-            'sources', 'confirmed', 'latest', 'news', 'today', 'yesterday'
-        ]
-        
-        content_lower = content.lower()
-        
-        # Must contain at least one news indicator
-        has_news_indicator = any(indicator in content_lower for indicator in news_indicators)
-        
-        # Should not be too short or too promotional
-        is_substantial = len(content.split()) > 8
-        is_not_promotional = not any(promo in content_lower for promo in ['buy now', 'subscribe', 'follow us', 'download app'])
-        
-        return has_news_indicator and is_substantial and is_not_promotional
+    def _extract_source_name(self, feed_url: str) -> str:
+        """Extract a clean source name from RSS feed URL"""
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(feed_url).netloc
+            
+            # Clean up common domain patterns
+            domain = domain.replace('www.', '').replace('feeds.', '')
+            
+            # Map to readable names
+            source_map = {
+                'timesofindia.indiatimes.com': 'Times of India',
+                'ndtv.com': 'NDTV',
+                'hindustantimes.com': 'Hindustan Times',
+                'indiatoday.in': 'India Today',
+                'news18.com': 'News18',
+                'thehindu.com': 'The Hindu',
+                'indianexpress.com': 'Indian Express',
+                'economictimes.indiatimes.com': 'Economic Times',
+                'livemint.com': 'Live Mint',
+                'moneycontrol.com': 'MoneyControl',
+                'business-standard.com': 'Business Standard',
+                'reuters.com': 'Reuters',
+                'bbc.com': 'BBC',
+                'cnn.com': 'CNN',
+                'aljazeera.com': 'Al Jazeera'
+            }
+            
+            return source_map.get(domain, domain.title())
+        except:
+            return 'RSS Feed'
     
-    def _extract_title(self, content: str) -> str:
-        """Extract a title from tweet content"""
-        # Remove URLs, mentions, and hashtags for cleaner title
-        clean_content = re.sub(r'http\S+|www\S+|@\w+|#\w+', '', content)
-        clean_content = re.sub(r'\s+', ' ', clean_content).strip()
-        
-        # Take first sentence or first 100 characters
-        sentences = clean_content.split('.')
-        if sentences and len(sentences[0]) > 20:
-            return sentences[0].strip() + '.'
-        
-        return clean_content[:100] + '...' if len(clean_content) > 100 else clean_content
+    # Remove Twitter-specific methods
+    # def _is_news_tweet(self, content: str) -> bool:  # REMOVED
+    # def _extract_title(self, content: str) -> str:   # REMOVED - only needed for tweets
     
     def _extract_keywords(self, query: str) -> List[str]:
         """Extract keywords from user query"""
@@ -381,7 +283,7 @@ class NewsScraper:
         return results
     
     def _parse_rss_date(self, date_str: str) -> datetime:
-        """Parse RSS date string to datetime object"""
+        """Parse RSS date string to datetime object with timezone handling"""
         try:
             # Try common RSS date formats
             formats = [
@@ -393,13 +295,18 @@ class NewsScraper:
             
             for fmt in formats:
                 try:
-                    return datetime.strptime(date_str.strip(), fmt)
+                    parsed_date = datetime.strptime(date_str.strip(), fmt)
+                    # If the datetime is naive (no timezone), make it timezone-aware
+                    if parsed_date.tzinfo is None:
+                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                    return parsed_date
                 except ValueError:
                     continue
             
-            return datetime.now()
+            # Return timezone-aware datetime for consistency
+            return datetime.now(timezone.utc)
         except Exception:
-            return datetime.now()
+            return datetime.now(timezone.utc)
     
     async def scrape_current_affairs(self, limit: int = 5) -> List[Dict]:
         """Scrape current affairs news from reliable sources"""
@@ -476,7 +383,7 @@ class NewsScraper:
                                                 'content': content if content else title,
                                                 'url': link,
                                                 'source': source_url.split('/')[2],
-                                                'timestamp': datetime.now()
+                                                'timestamp': datetime.now(timezone.utc)
                                             })
                                             
                                             if len(headlines) >= limit:
