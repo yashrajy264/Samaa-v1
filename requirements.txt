@@ -1,0 +1,25 @@
+# Telegram Bot
+python-telegram-bot==20.7
+
+# News Scraping
+snscrape==0.7.1.20240311  # Updated to latest version
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3  # Added for XML parsing
+
+# Text Processing and Summarization
+transformers==4.36.2
+torch==2.1.2
+sentencepiece==0.1.99
+sacremoses==0.1.1
+
+# Text-to-Speech (Coqui TTS)
+TTS==0.22.0
+
+# Speech-to-Text (Whisper)
+openai-whisper==20231117
+
+# Utilities
+python-dotenv==1.0.0
+schedule==1.2.0
+threading==0.0.2  # Added for threading support
